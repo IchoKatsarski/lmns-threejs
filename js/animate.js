@@ -4,20 +4,23 @@ import { lerp }   from './utils.js';
 import {
   readAudio, updateSmoothedBands, updateFluxEnvelope,
   sBass, sMid, sHigh, sBassS, sMidS, sHighS,
-  spectralFlux, fluxEnv,
+  spectralFlux, fluxEnv, freqData,
 } from './audio.js';
+import { buildVisualizer, updateVisualizer } from './visualizer.js';
 import { scene, camera, composer } from './scene.js';
 import { buildLights, updateLights } from './lights.js';
 import { updateShaderUniforms }      from './material.js';
 import { buildOBJ, objModel, baseScale, updateLogo } from './logo.js';
 import { buildPlanets, updatePlanets } from './planets.js';
 import {
-  buildStarField,
+  buildStarField,     updateStars,
+  buildNebula,        updateNebula,
   buildShockwavePool, spawnShockwave, updateRings,
   buildCometPool,     spawnComet,     updateComets,
 } from './effects.js';
 import {
   initRenderer, initScene, initCamera, initComposer, onResize, renderer,
+  triggerFlash, updateColorTemperature,
 } from './scene.js';
 import { FluidEffect } from './fluid.js';
 
@@ -48,6 +51,19 @@ let shakeAmt = 0;
 let mouseX = 0, mouseY = 0;
 let tiltX  = 0, tiltY  = 0;
 
+// ── Free-cam state ────────────────────────────────────────────────────────────
+let freeCam    = false;
+let freeTheta  = 0;      // azimuth  (horizontal), synced from orbitAngle on enable
+let freePhi    = 0;      // elevation (vertical),  0 = equator
+const PHI_MIN  = -Math.PI * 0.42;
+const PHI_MAX  =  Math.PI * 0.42;
+
+let dragActive  = false;
+let dragLastX   = 0;
+let dragLastY   = 0;
+let dragVelX    = 0;   // angular velocity (radians/frame) carried after release
+let dragVelY    = 0;
+
 // Fluid effect — tracks mouse in UV space for delta calculation
 let fluidEffect  = null;
 let prevMouseU   = 0.5;
@@ -67,9 +83,12 @@ export function setupScene() {
   buildOBJ();
   buildPlanets();
   buildStarField();
+  buildNebula();
   buildShockwavePool();
   buildCometPool();
   initComposer();
+
+  buildVisualizer();
 
   // Fluid effect — must be created after renderer + composer exist
   fluidEffect = new FluidEffect(renderer, { simRes: 256, pressureIter: 20 });
@@ -79,6 +98,44 @@ export function setupScene() {
   window.addEventListener('wheel', (e) => {
     scrollVel += e.deltaY * 0.28;
   }, { passive: true });
+
+  // ── Free-cam button ─────────────────────────────────────────────────────────
+  const freeCamBtn = document.getElementById('free-cam-btn');
+  freeCamBtn.style.display = 'block';
+
+  freeCamBtn.addEventListener('click', () => {
+    freeCam = !freeCam;
+    freeCamBtn.classList.toggle('active', freeCam);
+    if (freeCam) {
+      // Seed free-cam angles from the current auto-orbit position
+      freeTheta = orbitAngle;
+      freePhi   = Math.PI * 0.18 * 0.6; // approximate current tilt elevation
+    }
+  });
+
+  // Drag to rotate in free-cam mode
+  window.addEventListener('pointerdown', (e) => {
+    if (!freeCam) return;
+    dragActive = true;
+    dragLastX  = e.clientX;
+    dragLastY  = e.clientY;
+  });
+
+  window.addEventListener('pointermove', (e) => {
+    if (!freeCam || !dragActive) return;
+    const dx  = e.clientX - dragLastX;
+    const dy  = e.clientY - dragLastY;
+    dragLastX = e.clientX;
+    dragLastY = e.clientY;
+    // Accumulate velocity so release carries momentum
+    dragVelX  = dx * 0.006;
+    dragVelY  = dy * 0.006;
+    freeTheta -= dragVelX;
+    freePhi    = Math.min(PHI_MAX, Math.max(PHI_MIN, freePhi - dragVelY));
+  });
+
+  window.addEventListener('pointerup',    () => { dragActive = false; });
+  window.addEventListener('pointerleave', () => { dragActive = false; });
 
   window.addEventListener('mousemove', (e) => {
     mouseX   = (e.clientX / window.innerWidth)  * 2 - 1;
@@ -119,7 +176,7 @@ export function animate() {
 
     orbitPulse += 4.0;
     shakeAmt   += spectralFlux * 22;
-    spawnShockwave();
+    spawnShockwave(spectralFlux);
     if (Math.random() < 0.55) spawnComet();
   }
 
@@ -150,25 +207,48 @@ export function animate() {
   scrollVel *= 0.88;
   zoomBase   = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomBase + scrollVel));
 
-  if (isBeat) zoomShock += 55;
+  if (isBeat) {
+    zoomShock += 55;
+    triggerFlash(spectralFlux * 3.5);
+  }
   zoomShock  *= 0.94;
   zoomCurrent = lerp(zoomCurrent, zoomBase + zoomShock, 0.07);
 
-  const TILT   = Math.PI * 0.18;
-  const cx     =  Math.sin(orbitAngle) * zoomCurrent;
-  const cz     =  Math.cos(orbitAngle) * Math.cos(TILT) * zoomCurrent;
-  const yOrbit =  Math.cos(orbitAngle) * Math.sin(TILT) * zoomCurrent;
-  const yBob   =  Math.sin(orbitAngle * 1.6) * 10;
+  const shake = (Math.random() - 0.5) * shakeAmt;
 
-  tiltX = lerp(tiltX, mouseX, 0.025);
-  tiltY = lerp(tiltY, mouseY, 0.025);
+  if (freeCam) {
+    // Apply drag inertia when not actively dragging
+    if (!dragActive) {
+      dragVelX *= 0.90;
+      dragVelY *= 0.90;
+      freeTheta -= dragVelX;
+      freePhi    = Math.min(PHI_MAX, Math.max(PHI_MIN, freePhi - dragVelY));
+    }
 
-  camera.position.set(
-    cx + (Math.random() - 0.5) * shakeAmt,
-    yOrbit + yBob + (Math.random() - 0.5) * shakeAmt,
-    cz
-  );
-  camera.lookAt(tiltX * 12, -tiltY * 8, 0);
+    // Spherical coords — user controls theta + phi via drag
+    const yBob = Math.sin(t * 1.6) * 4;  // gentle idle bob
+    const cx   =  Math.cos(freePhi) * Math.sin(freeTheta) * zoomCurrent;
+    const cy   =  Math.sin(freePhi) * zoomCurrent + yBob;
+    const cz   =  Math.cos(freePhi) * Math.cos(freeTheta) * zoomCurrent;
+    camera.position.set(cx + shake, cy + shake, cz);
+    camera.lookAt(0, 0, 0);
+  } else {
+    const TILT   = Math.PI * 0.18;
+    const cx     =  Math.sin(orbitAngle) * zoomCurrent;
+    const cz     =  Math.cos(orbitAngle) * Math.cos(TILT) * zoomCurrent;
+    const yOrbit =  Math.cos(orbitAngle) * Math.sin(TILT) * zoomCurrent;
+    const yBob   =  Math.sin(orbitAngle * 1.6) * 10;
+
+    tiltX = lerp(tiltX, mouseX, 0.025);
+    tiltY = lerp(tiltY, mouseY, 0.025);
+
+    camera.position.set(
+      cx + shake,
+      yOrbit + yBob + shake,
+      cz
+    );
+    camera.lookAt(tiltX * 12, -tiltY * 8, 0);
+  }
 
   // ── Logo ───────────────────────────────────────────────────────────────────
   if (objModel) objModel.scale.setScalar(baseScale);
@@ -176,7 +256,7 @@ export function animate() {
 
   // ── Planets ────────────────────────────────────────────────────────────────
   const orbitMult = 0.04 + groove * 1.3 + orbitPulse;
-  updatePlanets(orbitMult);
+  updatePlanets(orbitMult, sBass, sMid, sHigh);
 
   // ── Lights ─────────────────────────────────────────────────────────────────
   updateLights(t, sBass, sMid, sHigh);
@@ -184,6 +264,9 @@ export function animate() {
   // ── Effects ────────────────────────────────────────────────────────────────
   updateRings();
   updateComets();
+  updateStars(sHigh);
+  updateNebula(t, sBass);
+  updateVisualizer(freqData, sBass, sMid, sHigh);
 
   // ── Fluid ──────────────────────────────────────────────────────────────────
   if (fluidEffect) {
@@ -201,5 +284,6 @@ export function animate() {
     fluidEffect.step();
   }
 
+  updateColorTemperature();
   composer.render();
 }

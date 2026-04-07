@@ -53,6 +53,19 @@ export function initComposer() {
   ));
 }
 
+// ── Beat color temperature ─────────────────────────────────────────────────────
+// flashAmt: 0..1, drives a brief exposure + warmth surge then fades back
+let _flashAmt = 0;
+
+export function triggerFlash(strength) {
+  _flashAmt = Math.min(1, _flashAmt + strength);
+}
+
+export function updateColorTemperature() {
+  _flashAmt *= 0.88;  // decay each frame
+  renderer.toneMappingExposure = 0.60 + _flashAmt * 0.55;
+}
+
 export function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();

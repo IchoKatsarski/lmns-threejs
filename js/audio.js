@@ -19,6 +19,9 @@ export let sHighS = 0;
 export let spectralFlux = 0;
 export let fluxEnv      = 0;
 
+// Raw frequency data for the visualizer — null until audio is started
+export let freqData = null;
+
 export async function startAudio() {
   const ctx    = new AudioContext();
   const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -34,6 +37,7 @@ export async function startAudio() {
   analyser.smoothingTimeConstant = 0.8;
   source.connect(analyser);
   dataArray = new Uint8Array(analyser.frequencyBinCount);
+  freqData  = dataArray;  // shared reference — always current after readAudio()
 }
 
 export function readAudio() {

@@ -145,8 +145,23 @@ export function buildPlanets() {
   }
 }
 
+// Smoothed per-planet tint accumulator (persists between frames)
+const _tint = { r: 0, g: 0, b: 0 };
+
 // ── Per-frame planet update ───────────────────────────────────────────────────
-export function updatePlanets(orbitMult) {
+// sBass/sMid/sHigh: smoothed audio bands [0..1] for trail color tinting
+export function updatePlanets(orbitMult, sBass = 0, sMid = 0, sHigh = 0) {
+  // Target tint: bass drives red, mid drives green, high drives blue.
+  // Lerp slowly so color shifts breathe rather than flicker.
+  _tint.r += (Math.min(1, sBass * 2.2) - _tint.r) * 0.06;
+  _tint.g += (Math.min(1, sMid  * 2.0) - _tint.g) * 0.06;
+  _tint.b += (Math.min(1, sHigh * 1.8) - _tint.b) * 0.06;
+
+  // When silent the tint is near zero → trail stays white-grey (baseline 0.18)
+  const tR = 0.18 + _tint.r * 0.82;
+  const tG = 0.18 + _tint.g * 0.82;
+  const tB = 0.18 + _tint.b * 0.82;
+
   planets.forEach(p => {
     p.angle += p.baseSpeed * orbitMult * 0.016;
     p.mesh.rotateOnWorldAxis(p.spinAxis, p.spinRate * 0.016);
@@ -171,8 +186,8 @@ export function updatePlanets(orbitMult) {
     for (let i = 0; i < len; i++) {
       const v    = p.trail[len - 1 - i];  // most-recent point first (brightest head)
       const fade = Math.pow(1 - i / p.trailLen, 1.6);
-      posArr[i*3]   = v.x; posArr[i*3+1] = v.y; posArr[i*3+2] = v.z;
-      colArr[i*3]   = fade; colArr[i*3+1] = fade; colArr[i*3+2] = fade;
+      posArr[i*3]   = v.x;      posArr[i*3+1] = v.y;      posArr[i*3+2] = v.z;
+      colArr[i*3]   = fade * tR; colArr[i*3+1] = fade * tG; colArr[i*3+2] = fade * tB;
     }
     p.line.geometry.setDrawRange(0, len);
     p.line.geometry.attributes.position.needsUpdate = true;
