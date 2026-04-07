@@ -61,9 +61,10 @@ export function triggerFlash(strength) {
   _flashAmt = Math.min(1, _flashAmt + strength);
 }
 
-export function updateColorTemperature() {
+export function updateColorTemperature(wobble = 0) {
   _flashAmt *= 0.88;  // decay each frame
-  renderer.toneMappingExposure = 0.60 + _flashAmt * 0.55;
+  // Wobble adds a gentle breathing pulse on top of the beat flash
+  renderer.toneMappingExposure = 0.60 + _flashAmt * 0.55 + wobble * 0.18;
 }
 
 export function onResize() {

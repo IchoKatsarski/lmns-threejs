@@ -2,9 +2,9 @@
 import * as THREE from 'three';
 import { lerp }   from './utils.js';
 import {
-  readAudio, updateSmoothedBands, updateFluxEnvelope,
+  readAudio, updateSmoothedBands, updateFluxEnvelope, updateWobble,
   sBass, sMid, sHigh, sBassS, sMidS, sHighS,
-  spectralFlux, fluxEnv, freqData,
+  spectralFlux, fluxEnv, freqData, wobbleIntensity,
 } from './audio.js';
 import { buildVisualizer, updateVisualizer } from './visualizer.js';
 import { scene, camera, composer } from './scene.js';
@@ -41,7 +41,10 @@ let orbitPulse  = 0;
 
 let megaBeatCount = 0;   // triggers meteor shower every N mega-beats
 
-let zoomShock   = 0;
+let zoomPulseDir    = 1;     // alternates in/out each beat
+let zoomPulseAmt    = 0;     // current animated pulse offset
+let lastBeatTime    = 0;     // for BPM estimation
+let beatInterval    = 0.5;   // smoothed seconds between beats (starts at 120bpm)
 let zoomCurrent = 340;
 let zoomTarget  = 340;   // where scroll wants to go (spiky raw input lands here)
 let zoomBase    = 340;   // smoothed intermediate (lerps toward zoomTarget)
@@ -162,6 +165,7 @@ export function animate() {
   const t  = clock.elapsedTime;               // already updated by getDelta() above
 
   readAudio();
+  updateWobble();
 
   // ── Beat / onset detection ──────────────────────────────────────────────────
   updateFluxEnvelope();
@@ -183,6 +187,7 @@ export function animate() {
     beatCount++;
     if (beatCount % 64 === 0) orbitDir *= -1;
 
+
     orbitPulse += 4.0;
     shakeAmt   += spectralFlux * 22;
     spawnShockwave(spectralFlux);
@@ -200,6 +205,11 @@ export function animate() {
     if (megaBeatCount % 6 === 0) spawnMeteorShower();
   }
 
+  if (isBeat) {
+    console.log(`%c[KICK]%c t=${t.toFixed(2)}s  flux=${spectralFlux.toFixed(4)}  bass=${sBass.toFixed(3)}${isMegaBeat ? '  ⚡ MEGA' : ''}`,
+      `color:${isMegaBeat ? '#ff6600' : '#44aaff'};font-weight:bold`, 'color:inherit');
+  }
+
   // ── Shader mode crossfade ───────────────────────────────────────────────────
   modeFloat += (modeTarget - modeFloat) * 0.28;
 
@@ -213,7 +223,9 @@ export function animate() {
   updateShaderUniforms(sBassS, sMidS, sHighS, musicalTime, modeFloat);
 
   // ── Camera orbit ───────────────────────────────────────────────────────────
-  const targetSpeed = orbitDir * (0.008 + groove * 0.48);
+  // BPM boost — faster beats (shorter interval) nudge orbit a little quicker
+  const bpmBoost    = lerp(0, 0.06, Math.min(1, (0.5 - beatInterval) / 0.35));
+  const targetSpeed = orbitDir * (0.008 + groove * 0.48 + bpmBoost);
   orbitSpeed = lerp(orbitSpeed, targetSpeed, 0.022);
   orbitAngle += orbitSpeed * dt;
 
@@ -224,15 +236,37 @@ export function animate() {
   // Stage 2 — zoomBase smoothly chases zoomTarget (eases out choppy wheel events)
   zoomBase    = lerp(zoomBase, zoomTarget, Math.min(1, dt * 9));
 
-  // Stage 3 — zoomCurrent chases zoomBase + beat shock (final camera ease)
+  // Stage 3 — beat zoom pulse (alternates in/out, ramps with BPM)
   if (isBeat) {
-    zoomShock += 55;
     triggerFlash(spectralFlux * 3.5);
-  }
-  zoomShock  *= Math.pow(0.94, dt * 60);
-  zoomCurrent = lerp(zoomCurrent, zoomBase + zoomShock, Math.min(1, dt * 5));
 
-  const shake = (Math.random() - 0.5) * shakeAmt;
+    // Update BPM estimate from measured beat interval
+    if (lastBeatTime > 0) {
+      const measured = t - lastBeatTime;
+      if (measured > 0.1 && measured < 3.0)   // ignore outliers
+        beatInterval = lerp(beatInterval, measured, 0.25);
+    }
+    lastBeatTime = t;
+
+    // Pulse magnitude scales with flux; speed ramps with BPM
+    const pulseMag = 40 + spectralFlux * 80;
+    zoomPulseAmt  = zoomPulseDir * pulseMag;
+    zoomPulseDir *= -1;   // flip in/out each beat
+  }
+
+  // Pulse decays toward 0 — faster when beats are faster (higher BPM)
+  const pulseDecay = Math.pow(0.1, dt / Math.max(0.15, beatInterval * 0.55));
+  zoomPulseAmt  *= pulseDecay;
+  zoomCurrent    = lerp(zoomCurrent, zoomBase + zoomPulseAmt, Math.min(1, dt * 5));
+
+  // Wobble exaggeration — only kicks in with strong detected wobble (mirrors bassStrong threshold)
+  const wobbleShake = wobbleIntensity > 0.35
+    ? (Math.random() - 0.5) * wobbleIntensity * 28
+    : 0;
+  if (wobbleIntensity > 0.35)
+    orbitSpeed += wobbleIntensity * 0.012 * Math.sin(t * 14);
+
+  const shake = (Math.random() - 0.5) * shakeAmt + wobbleShake;
 
   if (freeCam) {
     // Apply drag inertia when not actively dragging
@@ -304,7 +338,7 @@ export function animate() {
     fluidEffect.step();
   }
 
-  updateColorTemperature();
+  updateColorTemperature(wobbleIntensity);
   updateEmissivePulse();
   composer.render();
 }
