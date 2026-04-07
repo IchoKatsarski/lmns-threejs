@@ -2,8 +2,33 @@
 import * as THREE from 'three';
 import { scene }  from './scene.js';
 
-let bassLight = null;
+let bassLight  = null;
 const orbiters = [];
+
+// ── Cursor light ──────────────────────────────────────────────────────────────
+let _cursorLight = null;
+const _cursorPos  = new THREE.Vector3();
+const _cursorDir  = new THREE.Vector3();
+
+export function buildCursorLight() {
+  _cursorLight = new THREE.PointLight(0xffffff, 0, 420, 1.6);
+  scene.add(_cursorLight);
+}
+
+// ndcX/ndcY: mouse in [-1, 1] space; cam: current camera; dist: depth into scene
+export function updateCursorLight(ndcX, ndcY, cam, dist) {
+  if (!_cursorLight) return;
+
+  // Project NDC → world ray, place light at `dist` along it
+  _cursorPos.set(ndcX, ndcY, 0.5).unproject(cam);
+  _cursorDir.copy(_cursorPos).sub(cam.position).normalize();
+  _cursorLight.position.copy(cam.position).addScaledVector(_cursorDir, dist);
+
+  // Soft white with a hint of color from mouse position
+  const hue = ((ndcX + 1) * 0.5 * 0.18 + 0.55) % 1;
+  _cursorLight.color.setHSL(hue, 0.55, 0.75);
+  _cursorLight.intensity = 3.5;
+}
 
 export function buildLights() {
   // Soft ambient fill

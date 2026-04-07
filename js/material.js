@@ -13,6 +13,19 @@ export function updateShaderUniforms(bass, mid, high, time, mode) {
   _uniforms.uMode.value = mode;
 }
 
+// ── Emissive pulse ─────────────────────────────────────────────────────────────
+// Call triggerEmissivePulse on mega-beat; call updateEmissivePulse every frame.
+let _emissivePulse = 0;
+
+export function triggerEmissivePulse(strength = 1) {
+  _emissivePulse = Math.min(3, _emissivePulse + strength);
+}
+
+export function updateEmissivePulse() {
+  _emissivePulse *= 0.88;
+  if (_uniforms) _uniforms.uEmissivePulse.value = _emissivePulse;
+}
+
 // ── Procedural scratch normal map ─────────────────────────────────────────────
 function buildScratchNormalMap(size = 1024) {
   const canvas = document.createElement('canvas');
@@ -370,28 +383,31 @@ vec3 _mode19(vec3 wp,vec3 vd,vec3 n,float t,float bass,float mid,float high){
   return col*(0.50+bass*0.50+mid*0.18);
 }
 
-// Dispatcher — smooth blend between two adjacent modes
+// Dispatcher — smooth blend between two adjacent modes.
+// Uses else-if + explicit init so ANGLE/HLSL can prove the variable is always set.
 vec3 _modeColor(float m,vec3 wp,vec3 vd,vec3 n,float t,float bass,float mid,float high){
-  if(m< 0.5) return _mode0 (wp,vd,n,t,bass,mid,high);
-  if(m< 1.5) return _mode1 (wp,vd,n,t,bass,mid,high);
-  if(m< 2.5) return _mode2 (wp,vd,n,t,bass,mid,high);
-  if(m< 3.5) return _mode3 (wp,vd,n,t,bass,mid,high);
-  if(m< 4.5) return _mode4 (wp,vd,n,t,bass,mid,high);
-  if(m< 5.5) return _mode5 (wp,vd,n,t,bass,mid,high);
-  if(m< 6.5) return _mode6 (wp,vd,n,t,bass,mid,high);
-  if(m< 7.5) return _mode7 (wp,vd,n,t,bass,mid,high);
-  if(m< 8.5) return _mode8 (wp,vd,n,t,bass,mid,high);
-  if(m< 9.5) return _mode9 (wp,vd,n,t,bass,mid,high);
-  if(m<10.5) return _mode10(wp,vd,n,t,bass,mid,high);
-  if(m<11.5) return _mode11(wp,vd,n,t,bass,mid,high);
-  if(m<12.5) return _mode12(wp,vd,n,t,bass,mid,high);
-  if(m<13.5) return _mode13(wp,vd,n,t,bass,mid,high);
-  if(m<14.5) return _mode14(wp,vd,n,t,bass,mid,high);
-  if(m<15.5) return _mode15(wp,vd,n,t,bass,mid,high);
-  if(m<16.5) return _mode16(wp,vd,n,t,bass,mid,high);
-  if(m<17.5) return _mode17(wp,vd,n,t,bass,mid,high);
-  if(m<18.5) return _mode18(wp,vd,n,t,bass,mid,high);
-             return _mode19(wp,vd,n,t,bass,mid,high);
+  vec3 c=vec3(0.0);
+       if(m< 0.5) c=_mode0 (wp,vd,n,t,bass,mid,high);
+  else if(m< 1.5) c=_mode1 (wp,vd,n,t,bass,mid,high);
+  else if(m< 2.5) c=_mode2 (wp,vd,n,t,bass,mid,high);
+  else if(m< 3.5) c=_mode3 (wp,vd,n,t,bass,mid,high);
+  else if(m< 4.5) c=_mode4 (wp,vd,n,t,bass,mid,high);
+  else if(m< 5.5) c=_mode5 (wp,vd,n,t,bass,mid,high);
+  else if(m< 6.5) c=_mode6 (wp,vd,n,t,bass,mid,high);
+  else if(m< 7.5) c=_mode7 (wp,vd,n,t,bass,mid,high);
+  else if(m< 8.5) c=_mode8 (wp,vd,n,t,bass,mid,high);
+  else if(m< 9.5) c=_mode9 (wp,vd,n,t,bass,mid,high);
+  else if(m<10.5) c=_mode10(wp,vd,n,t,bass,mid,high);
+  else if(m<11.5) c=_mode11(wp,vd,n,t,bass,mid,high);
+  else if(m<12.5) c=_mode12(wp,vd,n,t,bass,mid,high);
+  else if(m<13.5) c=_mode13(wp,vd,n,t,bass,mid,high);
+  else if(m<14.5) c=_mode14(wp,vd,n,t,bass,mid,high);
+  else if(m<15.5) c=_mode15(wp,vd,n,t,bass,mid,high);
+  else if(m<16.5) c=_mode16(wp,vd,n,t,bass,mid,high);
+  else if(m<17.5) c=_mode17(wp,vd,n,t,bass,mid,high);
+  else if(m<18.5) c=_mode18(wp,vd,n,t,bass,mid,high);
+  else             c=_mode19(wp,vd,n,t,bass,mid,high);
+  return c;
 }
 `;
 
@@ -416,12 +432,13 @@ export function buildGlassMaterial() {
   });
 
   mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uBass      = { value: 0.0 };
-    shader.uniforms.uMid       = { value: 0.0 };
-    shader.uniforms.uHigh      = { value: 0.0 };
-    shader.uniforms.uDispScale = { value: 0.0 };  // deformer off
-    shader.uniforms.uTime      = { value: 0.0 };
-    shader.uniforms.uMode      = { value: 0.0 };
+    shader.uniforms.uBass          = { value: 0.0 };
+    shader.uniforms.uMid           = { value: 0.0 };
+    shader.uniforms.uHigh          = { value: 0.0 };
+    shader.uniforms.uDispScale     = { value: 0.0 };  // deformer off
+    shader.uniforms.uTime          = { value: 0.0 };
+    shader.uniforms.uMode          = { value: 0.0 };
+    shader.uniforms.uEmissivePulse = { value: 0.0 };
     _uniforms = shader.uniforms;
 
     // Vertex — noise helpers + world-space varyings
@@ -475,6 +492,11 @@ export function buildGlassMaterial() {
     shader.fragmentShader = GLSL_MODES + shader.fragmentShader;
 
     shader.fragmentShader = shader.fragmentShader.replace(
+      'uniform float uMode;',
+      'uniform float uMode;\nuniform float uEmissivePulse;'
+    );
+
+    shader.fragmentShader = shader.fragmentShader.replace(
       '#include <emissivemap_fragment>',
       `#include <emissivemap_fragment>
        vec3 _vd  = normalize(cameraPosition - vWPos);
@@ -486,7 +508,9 @@ export function buildGlassMaterial() {
        float _bl = _f < 0.5 ? 2.0*_f*_f : 1.0-2.0*(1.0-_f)*(1.0-_f);
        vec3 _colA = _modeColor(_mA, vWPos, _vd, _n, uTime, uBass, uMid, uHigh);
        vec3 _colB = _modeColor(_mB, vWPos, _vd, _n, uTime, uBass, uMid, uHigh);
-       totalEmissiveRadiance += mix(_colA, _colB, _bl);`
+       vec3 _modeCol = mix(_colA, _colB, _bl);
+       // Emissive pulse: briefly brightens the logo from within on mega-beat
+       totalEmissiveRadiance += _modeCol * (1.0 + uEmissivePulse * 1.8);`
     );
   };
 

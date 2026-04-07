@@ -106,9 +106,9 @@ export function buildPlanets() {
     const ascNode   = Math.random() * Math.PI * 2;
     const baseSpeed = (0.25 + Math.random() * 0.65) * Math.pow(90 / radius, 0.5);
 
-    // Trail length = 65% of this planet's orbital period at nominal speed
-    const framesPerOrbit = (2 * Math.PI) / (baseSpeed * 0.7 * 0.016);
-    const trailLen = Math.min(2000, Math.max(80, Math.floor(framesPerOrbit * 0.65)));
+    // Trail length scales with planet size: small (1.2) → 60 pts, large (7.7) → 1800 pts
+    const sizeFracNorm = (size - 1.2) / 6.5;   // 0..1
+    const trailLen     = Math.round(60 + Math.pow(sizeFracNorm, 1.4) * 1740);
 
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(size, 22, 16),
@@ -127,6 +127,35 @@ export function buildPlanets() {
     }));
     line.frustumCulled = false;
     scene.add(line);
+
+    // Saturn-style ring on selected planets
+    if (i === 3 || i === 8 || i === 14) {
+      const innerR = size * 1.55;
+      const outerR = size * 2.80;
+      const ringGeo = new THREE.RingGeometry(innerR, outerR, 64);
+
+      // Tilt UVs so the ring fades from inner to outer edge
+      const uv = ringGeo.attributes.uv;
+      const pos = ringGeo.attributes.position;
+      for (let vi = 0; vi < pos.count; vi++) {
+        const vx = pos.getX(vi), vy = pos.getY(vi);
+        const r  = Math.sqrt(vx * vx + vy * vy);
+        uv.setXY(vi, (r - innerR) / (outerR - innerR), 0);
+      }
+
+      const ringMat = new THREE.MeshBasicMaterial({
+        color:       new THREE.Color().setHSL((i * 0.13) % 1, 0.5, 0.65),
+        side:        THREE.DoubleSide,
+        transparent: true,
+        opacity:     0.35,
+        depthWrite:  false,
+      });
+
+      const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+      // Tilt the ring relative to the planet's equator
+      ringMesh.rotation.x = Math.PI * (0.42 + Math.random() * 0.16);
+      mesh.add(ringMesh);   // child of planet so it orbits with it
+    }
 
     // Slow independent axial spin, decoupled from orbital speed
     const spinAxis = new THREE.Vector3(

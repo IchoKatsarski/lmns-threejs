@@ -8,15 +8,16 @@ import {
 } from './audio.js';
 import { buildVisualizer, updateVisualizer } from './visualizer.js';
 import { scene, camera, composer } from './scene.js';
-import { buildLights, updateLights } from './lights.js';
-import { updateShaderUniforms }      from './material.js';
+import { buildLights, updateLights, buildCursorLight, updateCursorLight } from './lights.js';
+import { updateShaderUniforms, triggerEmissivePulse, updateEmissivePulse } from './material.js';
 import { buildOBJ, objModel, baseScale, updateLogo } from './logo.js';
 import { buildPlanets, updatePlanets } from './planets.js';
 import {
   buildStarField,     updateStars,
   buildNebula,        updateNebula,
-  buildShockwavePool, spawnShockwave, updateRings,
-  buildCometPool,     spawnComet,     updateComets,
+  buildShockwavePool, spawnShockwave,    updateRings,
+  buildCometPool,     spawnComet,        updateComets,
+  buildMeteorShower,  spawnMeteorShower, updateMeteorShower,
 } from './effects.js';
 import {
   initRenderer, initScene, initCamera, initComposer, onResize, renderer,
@@ -38,9 +39,12 @@ let groove      = 0;
 let musicalTime = 0;
 let orbitPulse  = 0;
 
+let megaBeatCount = 0;   // triggers meteor shower every N mega-beats
+
 let zoomShock   = 0;
 let zoomCurrent = 340;
-let zoomBase    = 340;   // scroll-controlled orbit radius
+let zoomTarget  = 340;   // where scroll wants to go (spiky raw input lands here)
+let zoomBase    = 340;   // smoothed intermediate (lerps toward zoomTarget)
 let scrollVel   = 0;     // scroll momentum
 
 const ZOOM_MIN  = 100;   // closest — won't clip the object
@@ -80,23 +84,26 @@ export function setupScene() {
   initScene();
   initCamera();
   buildLights();
+  buildCursorLight();
   buildOBJ();
   buildPlanets();
   buildStarField();
   buildNebula();
   buildShockwavePool();
   buildCometPool();
+  buildMeteorShower();
   initComposer();
 
   buildVisualizer();
 
   // Fluid effect — must be created after renderer + composer exist
-  fluidEffect = new FluidEffect(renderer, { simRes: 256, pressureIter: 20 });
+  fluidEffect = new FluidEffect(renderer, { simRes: 128, pressureIter: 12 });
   composer.addPass(fluidEffect.pass);
 
   window.addEventListener('resize', onResize);
   window.addEventListener('wheel', (e) => {
-    scrollVel += e.deltaY * 0.28;
+    // Accumulate into scrollVel; zoomTarget is updated in the loop
+    scrollVel += e.deltaY * 0.22;
   }, { passive: true });
 
   // ── Free-cam button ─────────────────────────────────────────────────────────
@@ -149,8 +156,10 @@ export function setupScene() {
 // ── Loop ──────────────────────────────────────────────────────────────────────
 export function animate() {
   requestAnimationFrame(animate);
-  const t  = clock.getElapsedTime();
-  const dt = 0.016; // fixed step — keeps physics deterministic at ~60 fps
+  // getDelta() must come first — getElapsedTime() calls getDelta() internally,
+  // which would reset the delta timer and make our dt read as ~0.
+  const dt = Math.min(clock.getDelta(), 0.05); // clamped — prevents spiral on tab blur
+  const t  = clock.elapsedTime;               // already updated by getDelta() above
 
   readAudio();
 
@@ -169,10 +178,10 @@ export function animate() {
   if (isBeat || silentTooLong) {
     modeFloat    = Math.round(modeFloat);
     modeTarget   = modeFloat + 1;
-    drumCooldown = 1.0;
+    drumCooldown = 0.18;
     lastSwitch   = t;
     beatCount++;
-    if (beatCount % 32 === 0) orbitDir *= -1;
+    if (beatCount % 64 === 0) orbitDir *= -1;
 
     orbitPulse += 4.0;
     shakeAmt   += spectralFlux * 22;
@@ -185,9 +194,14 @@ export function animate() {
 
   // Mega-beat check for logo flip (much stricter threshold)
   const isMegaBeat = isBeat && spectralFlux > fluxEnv * 3.0 + 0.018;
+  if (isMegaBeat) {
+    triggerEmissivePulse(spectralFlux * 8);
+    megaBeatCount++;
+    if (megaBeatCount % 6 === 0) spawnMeteorShower();
+  }
 
   // ── Shader mode crossfade ───────────────────────────────────────────────────
-  modeFloat += (modeTarget - modeFloat) * 0.12;
+  modeFloat += (modeTarget - modeFloat) * 0.28;
 
   // ── Smoothed audio bands for shader uniforms ────────────────────────────────
   updateSmoothedBands();
@@ -203,16 +217,20 @@ export function animate() {
   orbitSpeed = lerp(orbitSpeed, targetSpeed, 0.022);
   orbitAngle += orbitSpeed * dt;
 
-  // Scroll momentum — velocity decays each frame, giving a natural glide
-  scrollVel *= 0.88;
-  zoomBase   = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomBase + scrollVel));
+  // Stage 1 — momentum: velocity glides to zero with friction
+  scrollVel  *= Math.pow(0.80, dt * 60);   // frame-rate independent friction
+  zoomTarget  = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomTarget + scrollVel * dt * 60));
 
+  // Stage 2 — zoomBase smoothly chases zoomTarget (eases out choppy wheel events)
+  zoomBase    = lerp(zoomBase, zoomTarget, Math.min(1, dt * 9));
+
+  // Stage 3 — zoomCurrent chases zoomBase + beat shock (final camera ease)
   if (isBeat) {
     zoomShock += 55;
     triggerFlash(spectralFlux * 3.5);
   }
-  zoomShock  *= 0.94;
-  zoomCurrent = lerp(zoomCurrent, zoomBase + zoomShock, 0.07);
+  zoomShock  *= Math.pow(0.94, dt * 60);
+  zoomCurrent = lerp(zoomCurrent, zoomBase + zoomShock, Math.min(1, dt * 5));
 
   const shake = (Math.random() - 0.5) * shakeAmt;
 
@@ -260,13 +278,15 @@ export function animate() {
 
   // ── Lights ─────────────────────────────────────────────────────────────────
   updateLights(t, sBass, sMid, sHigh);
+  updateCursorLight(mouseX, mouseY, camera, zoomCurrent * 0.55);
 
   // ── Effects ────────────────────────────────────────────────────────────────
   updateRings();
-  updateComets();
+  updateComets(dt);
+  updateMeteorShower(dt);
   updateStars(sHigh);
   updateNebula(t, sBass);
-  updateVisualizer(freqData, sBass, sMid, sHigh);
+  updateVisualizer(freqData);
 
   // ── Fluid ──────────────────────────────────────────────────────────────────
   if (fluidEffect) {
@@ -285,5 +305,6 @@ export function animate() {
   }
 
   updateColorTemperature();
+  updateEmissivePulse();
   composer.render();
 }
