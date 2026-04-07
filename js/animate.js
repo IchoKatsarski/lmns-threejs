@@ -37,6 +37,11 @@ let orbitPulse  = 0;
 
 let zoomShock   = 0;
 let zoomCurrent = 340;
+let zoomBase    = 340;   // scroll-controlled orbit radius
+let scrollVel   = 0;     // scroll momentum
+
+const ZOOM_MIN  = 100;   // closest — won't clip the object
+const ZOOM_MAX  = 650;   // furthest — still clearly visible
 
 let shakeAmt = 0;
 
@@ -71,6 +76,10 @@ export function setupScene() {
   composer.addPass(fluidEffect.pass);
 
   window.addEventListener('resize', onResize);
+  window.addEventListener('wheel', (e) => {
+    scrollVel += e.deltaY * 0.28;
+  }, { passive: true });
+
   window.addEventListener('mousemove', (e) => {
     mouseX   = (e.clientX / window.innerWidth)  * 2 - 1;
     mouseY   = (e.clientY / window.innerHeight) * 2 - 1;
@@ -137,9 +146,13 @@ export function animate() {
   orbitSpeed = lerp(orbitSpeed, targetSpeed, 0.022);
   orbitAngle += orbitSpeed * dt;
 
+  // Scroll momentum — velocity decays each frame, giving a natural glide
+  scrollVel *= 0.88;
+  zoomBase   = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomBase + scrollVel));
+
   if (isBeat) zoomShock += 55;
   zoomShock  *= 0.94;
-  zoomCurrent = lerp(zoomCurrent, 340 + zoomShock, 0.07);
+  zoomCurrent = lerp(zoomCurrent, zoomBase + zoomShock, 0.07);
 
   const TILT   = Math.PI * 0.18;
   const cx     =  Math.sin(orbitAngle) * zoomCurrent;
