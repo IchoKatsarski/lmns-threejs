@@ -10,8 +10,9 @@ import { buildVisualizer, updateVisualizer } from './visualizer.js';
 import { scene, camera, composer } from './scene.js';
 import { buildLights, updateLights, buildCursorLight, updateCursorLight } from './lights.js';
 import { updateShaderUniforms, triggerEmissivePulse, updateEmissivePulse } from './material.js';
-import { buildOBJ, objModel, baseScale, updateLogo } from './logo.js';
-import { buildPlanets, updatePlanets } from './planets.js';
+import { buildOBJ, objModel, baseScale, updateLogo, spinCount, setSpinsLocked, updateLogoUpright } from './logo.js';
+import { buildPlanets, updatePlanets, setPlanetsVisible } from './planets.js';
+import { buildUnderwaterScene, updateUnderwaterScene, spawnRipple, WATER_BG } from './underwater.js';
 import {
   buildStarField,     updateStars,
   buildNebula,        updateNebula,
@@ -40,6 +41,30 @@ let musicalTime = 0;
 let orbitPulse  = 0;
 
 let megaBeatCount = 0;   // triggers meteor shower every N mega-beats
+
+// ── Scene transition state ────────────────────────────────────────────────────
+const SPACE_SKY  = new THREE.Color(0x000000);
+const WATER_SKY  = WATER_BG;
+const TILT_SPACE = Math.PI * 0.18;
+const TILT_WATER = Math.PI * 0.08;
+let tiltCurrent  = TILT_SPACE;
+
+let currentScene     = 0;   // 0 = space, 1 = underwater
+let transitionActive = false;
+let transitionDir    = 1;   // 1 = going underwater, -1 = going back to space
+let transitionStep   = 0;   // advances one per kick during transition
+let lastSpinCount    = 0;
+
+// Per-element blend targets (0 or 1) and their smooth values (lerped each frame)
+let planetTarget = 1, planetBlend = 1;
+let nebulaTarget = 1, nebulaBlend = 1;
+let starTarget   = 1, starBlend   = 1;
+let fishTarget   = 0, fishBlend   = 0;
+let jellyTarget  = 0, jellyBlend  = 0;
+let rayTarget    = 0, rayBlend    = 0;
+let skyTarget    = 0, skyBlend    = 0;
+
+let underwaterBeatPulse = 0;
 
 let zoomPulseDir    = 1;     // alternates in/out each beat
 let zoomPulseAmt    = 0;     // current animated pulse offset
@@ -97,6 +122,7 @@ export function setupScene() {
   buildMeteorShower();
   initComposer();
 
+  buildUnderwaterScene();
   buildVisualizer();
 
   // Fluid effect — must be created after renderer + composer exist
@@ -172,7 +198,7 @@ export function animate() {
   drumCooldown = Math.max(0, drumCooldown - dt);
 
   // Occasional random comet, independent of beats
-  if (Math.random() < 0.002) spawnComet();
+  if (Math.random() < 0.002 && currentScene === 0) spawnComet();
 
   const isBeat = spectralFlux > fluxEnv * 2.0 + 0.008
               && spectralFlux > 0.005
@@ -190,8 +216,9 @@ export function animate() {
 
     orbitPulse += 4.0;
     shakeAmt   += spectralFlux * 22;
-    spawnShockwave(spectralFlux);
-    if (Math.random() < 0.55) spawnComet();
+    if (currentScene === 0) spawnShockwave(spectralFlux);
+    if (Math.random() < 0.55 && currentScene === 0) spawnComet();
+    if (currentScene === 1) spawnRipple(spectralFlux);
   }
 
   orbitPulse *= 0.90;
@@ -202,13 +229,61 @@ export function animate() {
   if (isMegaBeat) {
     triggerEmissivePulse(spectralFlux * 8);
     megaBeatCount++;
-    if (megaBeatCount % 6 === 0) spawnMeteorShower();
+    if (megaBeatCount % 6 === 0 && currentScene === 0) spawnMeteorShower();
   }
 
   if (isBeat) {
     console.log(`%c[KICK]%c t=${t.toFixed(2)}s  flux=${spectralFlux.toFixed(4)}  bass=${sBass.toFixed(3)}${isMegaBeat ? '  ⚡ MEGA' : ''}`,
       `color:${isMegaBeat ? '#ff6600' : '#44aaff'};font-weight:bold`, 'color:inherit');
+
+    underwaterBeatPulse = 1.0;
+
+    // ── Advance scene transition one element-swap per kick ──────────────────
+    if (transitionActive) {
+      transitionStep++;
+      if (transitionDir === 1) {         // space → underwater
+        if (transitionStep === 1) { planetTarget = 0; fishTarget   = 1; }
+        if (transitionStep === 2) { nebulaTarget = 0; jellyTarget  = 1; }
+        if (transitionStep === 3) { starTarget   = 0; rayTarget    = 1; skyTarget = 1; }
+      } else {                           // underwater → space
+        if (transitionStep === 1) { fishTarget   = 0; planetTarget = 1; }
+        if (transitionStep === 2) { jellyTarget  = 0; nebulaTarget = 1; }
+        if (transitionStep === 3) { rayTarget    = 0; starTarget   = 1; skyTarget = 0; }
+      }
+      if (transitionStep >= 3) {
+        transitionActive = false;
+        currentScene     = transitionDir === 1 ? 1 : 0;
+      }
+    }
   }
+  underwaterBeatPulse *= Math.pow(0.18, dt);
+
+  // ── Scene switch trigger — every 4th logo flip ─────────────────────────────
+  if (spinCount !== lastSpinCount) {
+    lastSpinCount = spinCount;
+    if (spinCount % 4 === 0 && !transitionActive) {
+      transitionActive = true;
+      transitionDir    = currentScene === 0 ? 1 : -1;
+      transitionStep   = 0;
+    }
+  }
+
+  // Smooth per-element blends toward their targets
+  const EL     = Math.min(1, dt * 1.8);
+  planetBlend  = lerp(planetBlend, planetTarget, EL);
+  nebulaBlend  = lerp(nebulaBlend, nebulaTarget, EL);
+  starBlend    = lerp(starBlend,   starTarget,   EL);
+  fishBlend    = lerp(fishBlend,   fishTarget,   EL);
+  jellyBlend   = lerp(jellyBlend,  jellyTarget,  EL);
+  rayBlend     = lerp(rayBlend,    rayTarget,    EL);
+  skyBlend     = lerp(skyBlend,    skyTarget,    dt * 0.5);
+  tiltCurrent  = lerp(tiltCurrent, skyTarget === 0 ? TILT_SPACE : TILT_WATER, dt * 0.5);
+
+  scene.background = new THREE.Color().lerpColors(SPACE_SKY, WATER_SKY, skyBlend);
+
+  setPlanetsVisible(planetBlend > 0.01);
+  setSpinsLocked(false);  // logo flips in both scenes
+  updateLogoUpright(skyBlend);
 
   // ── Shader mode crossfade ───────────────────────────────────────────────────
   modeFloat += (modeTarget - modeFloat) * 0.28;
@@ -285,10 +360,9 @@ export function animate() {
     camera.position.set(cx + shake, cy + shake, cz);
     camera.lookAt(0, 0, 0);
   } else {
-    const TILT   = Math.PI * 0.18;
     const cx     =  Math.sin(orbitAngle) * zoomCurrent;
-    const cz     =  Math.cos(orbitAngle) * Math.cos(TILT) * zoomCurrent;
-    const yOrbit =  Math.cos(orbitAngle) * Math.sin(TILT) * zoomCurrent;
+    const cz     =  Math.cos(orbitAngle) * Math.cos(tiltCurrent) * zoomCurrent;
+    const yOrbit =  Math.cos(orbitAngle) * Math.sin(tiltCurrent) * zoomCurrent;
     const yBob   =  Math.sin(orbitAngle * 1.6) * 10;
 
     tiltX = lerp(tiltX, mouseX, 0.025);
@@ -318,8 +392,9 @@ export function animate() {
   updateRings();
   updateComets(dt);
   updateMeteorShower(dt);
-  updateStars(sHigh);
-  updateNebula(t, sBass);
+  updateStars(sHigh, starBlend);
+  updateNebula(t, sBass, nebulaBlend);
+  updateUnderwaterScene(t, fishBlend, jellyBlend, rayBlend, sBass, sHigh, underwaterBeatPulse);
   updateVisualizer(freqData);
 
   // ── Fluid ──────────────────────────────────────────────────────────────────

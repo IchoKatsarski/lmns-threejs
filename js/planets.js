@@ -179,6 +179,13 @@ const _tint = { r: 0, g: 0, b: 0 };
 
 // ── Per-frame planet update ───────────────────────────────────────────────────
 // sBass/sMid/sHigh: smoothed audio bands [0..1] for trail color tinting
+export function setPlanetsVisible(visible) {
+  for (const p of planets) {
+    p.mesh.visible = visible;
+    p.line.visible = visible;
+  }
+}
+
 export function updatePlanets(orbitMult, sBass = 0, sMid = 0, sHigh = 0) {
   // Target tint: bass drives red, mid drives green, high drives blue.
   // Lerp slowly so color shifts breathe rather than flicker.

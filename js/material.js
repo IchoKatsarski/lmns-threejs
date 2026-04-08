@@ -383,6 +383,11 @@ vec3 _mode19(vec3 wp,vec3 vd,vec3 n,float t,float bass,float mid,float high){
   return col*(0.50+bass*0.50+mid*0.18);
 }
 
+// Mode 20: Void — completely black, no emissive contribution
+vec3 _mode20(vec3 wp,vec3 vd,vec3 n,float t,float bass,float mid,float high){
+  return vec3(0.0);
+}
+
 // Dispatcher — smooth blend between two adjacent modes.
 // Uses else-if + explicit init so ANGLE/HLSL can prove the variable is always set.
 vec3 _modeColor(float m,vec3 wp,vec3 vd,vec3 n,float t,float bass,float mid,float high){
@@ -406,7 +411,8 @@ vec3 _modeColor(float m,vec3 wp,vec3 vd,vec3 n,float t,float bass,float mid,floa
   else if(m<16.5) c=_mode16(wp,vd,n,t,bass,mid,high);
   else if(m<17.5) c=_mode17(wp,vd,n,t,bass,mid,high);
   else if(m<18.5) c=_mode18(wp,vd,n,t,bass,mid,high);
-  else             c=_mode19(wp,vd,n,t,bass,mid,high);
+  else if(m<19.5) c=_mode19(wp,vd,n,t,bass,mid,high);
+  else             c=_mode20(wp,vd,n,t,bass,mid,high);
   return c;
 }
 `;
@@ -501,9 +507,9 @@ export function buildGlassMaterial() {
       `#include <emissivemap_fragment>
        vec3 _vd  = normalize(cameraPosition - vWPos);
        vec3 _n   = normalize(vWNorm);
-       float _m  = mod(uMode, 20.0);
+       float _m  = mod(uMode, 21.0);
        float _mA = floor(_m);
-       float _mB = mod(_mA + 1.0, 20.0);
+       float _mB = mod(_mA + 1.0, 21.0);
        float _f  = fract(_m);
        float _bl = _f < 0.5 ? 2.0*_f*_f : 1.0-2.0*(1.0-_f)*(1.0-_f);
        vec3 _colA = _modeColor(_mA, vWPos, _vd, _n, uTime, uBass, uMid, uHigh);

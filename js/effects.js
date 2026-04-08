@@ -30,16 +30,17 @@ export function buildStarField() {
       color: 0xffffff, size, sizeAttenuation: false,
       transparent: true, opacity, depthWrite: false,
     });
-    _starMaterials.push({ mat, baseSize: layer.baseSize });
+    _starMaterials.push({ mat, baseSize: layer.baseSize, baseOpacity: layer.opacity });
     scene.add(new THREE.Points(geo, mat));
   }
 }
 
-// Call each frame — sHigh drives a short pulse on the star sizes
-export function updateStars(sHigh) {
+// Call each frame — sHigh drives size pulse, spaceBlend fades stars out in nature mode
+export function updateStars(sHigh, spaceBlend = 1) {
   const pulse = 1 + sHigh * 1.8;
-  for (const { mat, baseSize } of _starMaterials) {
-    mat.size = lerp(mat.size, baseSize * pulse, 0.12);
+  for (const { mat, baseSize, baseOpacity } of _starMaterials) {
+    mat.size    = lerp(mat.size,    baseSize    * pulse,      0.12);
+    mat.opacity = lerp(mat.opacity, baseOpacity * spaceBlend, 0.05);
   }
 }
 
@@ -99,13 +100,12 @@ export function buildNebula() {
   }
 }
 
-// Call each frame — sBass pulses opacity, slow drift keeps them alive
-export function updateNebula(t, sBass) {
+// Call each frame — sBass pulses opacity, spaceBlend fades nebula out in nature mode
+export function updateNebula(t, sBass, spaceBlend = 1) {
   for (const n of _nebulae) {
     const pulse      = 1 + sBass * 0.55;
     const driftScale = 1 + Math.sin(t * 0.08 + n.drift) * 0.06;
-    n.mat.opacity    = lerp(n.mat.opacity, n.baseOpacity * pulse * driftScale * 0.04, 0.03);
-    // Drift nebula slightly for parallax feel
+    n.mat.opacity    = lerp(n.mat.opacity, n.baseOpacity * pulse * driftScale * 0.04 * spaceBlend, 0.03);
     n.sprite.position.y += Math.sin(t * 0.05 + n.drift) * 0.04;
   }
 }

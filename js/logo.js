@@ -12,6 +12,19 @@ export let baseScale   = 1;
 let spinState    = null;  // { axis, duration, elapsed, origQuat } while spinning
 let spinCooldown = 0;     // seconds until next spin is allowed
 
+export let spinCount   = 0;     // increments each time a flip completes
+let _spinsLocked       = false; // true in nature mode — no new flips
+
+export function setSpinsLocked(v) { _spinsLocked = v; }
+
+// Slerp the logo back toward upright (identity quaternion).
+// blend: 0 = no effect, 1 = instant snap — call with sceneBlend each frame.
+const _uprightQ = new THREE.Quaternion(); // identity
+export function updateLogoUpright(blend) {
+  if (!objModel || blend < 0.01) return;
+  objModel.quaternion.slerp(_uprightQ, blend * 0.04);
+}
+
 export function buildOBJ() {
   const mat = buildGlassMaterial();
 
@@ -57,7 +70,7 @@ export function updateLogo(dt, isMegaBeat) {
   spinCooldown = Math.max(0, spinCooldown - dt);
 
   // Trigger a new flip on a mega-beat when idle and cooldown has expired
-  if (isMegaBeat && spinCooldown <= 0 && !spinState && objModel) {
+  if (isMegaBeat && spinCooldown <= 0 && !spinState && objModel && !_spinsLocked) {
     const ax = new THREE.Vector3(
       Math.random() - 0.5,
       Math.random() - 0.5,
@@ -91,6 +104,7 @@ export function updateLogo(dt, isMegaBeat) {
     if (prog >= 1) {
       objModel.quaternion.copy(spinState.origQuat);  // snap clean to origin
       spinState = null;
+      spinCount++;
     }
   }
 }
