@@ -13,6 +13,7 @@ import { updateShaderUniforms, triggerEmissivePulse, updateEmissivePulse } from 
 import { buildOBJ, objModel, baseScale, updateLogo, spinCount, setSpinsLocked, updateLogoUpright } from './logo.js';
 import { buildPlanets, updatePlanets, setPlanetsVisible } from './planets.js';
 import { buildUnderwaterScene, updateUnderwaterScene, spawnRipple, WATER_BG } from './underwater.js';
+import { buildForestScene, updateForestScene, spawnFireflyBurst, FOREST_BG } from './forest.js';
 import {
   buildStarField,     updateStars,
   buildNebula,        updateNebula,
@@ -43,28 +44,36 @@ let orbitPulse  = 0;
 let megaBeatCount = 0;   // triggers meteor shower every N mega-beats
 
 // ── Scene transition state ────────────────────────────────────────────────────
-const SPACE_SKY  = new THREE.Color(0x000000);
-const WATER_SKY  = WATER_BG;
-const TILT_SPACE = Math.PI * 0.18;
-const TILT_WATER = Math.PI * 0.08;
-let tiltCurrent  = TILT_SPACE;
+// Scenes cycle: 0=space → 1=underwater → 2=forest → 0=space …
+const SCENE_SKIES = [
+  new THREE.Color(0x000000),  // space
+  WATER_BG,                   // underwater #001a2e
+  FOREST_BG,                  // forest     #010a04
+];
+const SCENE_TILTS = [
+  Math.PI * 0.18,   // space  — high orbit angle
+  Math.PI * 0.08,   // water  — slight upward, sunrays visible
+  Math.PI * 0.12,   // forest — mid elevation, see canopy + ground
+];
+let tiltCurrent = SCENE_TILTS[0];
 
-let currentScene     = 0;   // 0 = space, 1 = underwater
+let currentScene     = 0;   // 0=space, 1=water, 2=forest
 let transitionActive = false;
-let transitionDir    = 1;   // 1 = going underwater, -1 = going back to space
-let transitionStep   = 0;   // advances one per kick during transition
+let transitionStep   = 0;   // advances one per kick
+let nextScene        = 0;
 let lastSpinCount    = 0;
 
-// Per-element blend targets (0 or 1) and their smooth values (lerped each frame)
+// Per-element blend targets (0 or 1) and their smooth values
 let planetTarget = 1, planetBlend = 1;
 let nebulaTarget = 1, nebulaBlend = 1;
 let starTarget   = 1, starBlend   = 1;
 let fishTarget   = 0, fishBlend   = 0;
 let jellyTarget  = 0, jellyBlend  = 0;
 let rayTarget    = 0, rayBlend    = 0;
-let skyTarget    = 0, skyBlend    = 0;
+let shroomTarget = 0, shroomBlend = 0;  // mushrooms + fireflies + shafts
+let skyBlend     = 0;   // 0=space, lerps between sky colors via skyBlend
 
-let underwaterBeatPulse = 0;
+let beatPulse        = 0;   // shared pulse for all scenes
 
 let zoomPulseDir    = 1;     // alternates in/out each beat
 let zoomPulseAmt    = 0;     // current animated pulse offset
@@ -123,6 +132,7 @@ export function setupScene() {
   initComposer();
 
   buildUnderwaterScene();
+  buildForestScene();
   buildVisualizer();
 
   // Fluid effect — must be created after renderer + composer exist
@@ -219,6 +229,7 @@ export function animate() {
     if (currentScene === 0) spawnShockwave(spectralFlux);
     if (Math.random() < 0.55 && currentScene === 0) spawnComet();
     if (currentScene === 1) spawnRipple(spectralFlux);
+    if (currentScene === 2) spawnFireflyBurst(spectralFlux);
   }
 
   orbitPulse *= 0.90;
@@ -236,35 +247,50 @@ export function animate() {
     console.log(`%c[KICK]%c t=${t.toFixed(2)}s  flux=${spectralFlux.toFixed(4)}  bass=${sBass.toFixed(3)}${isMegaBeat ? '  ⚡ MEGA' : ''}`,
       `color:${isMegaBeat ? '#ff6600' : '#44aaff'};font-weight:bold`, 'color:inherit');
 
-    underwaterBeatPulse = 1.0;
+    beatPulse = 1.0;
 
     // ── Advance scene transition one element-swap per kick ──────────────────
     if (transitionActive) {
       transitionStep++;
-      if (transitionDir === 1) {         // space → underwater
-        if (transitionStep === 1) { planetTarget = 0; fishTarget   = 1; }
-        if (transitionStep === 2) { nebulaTarget = 0; jellyTarget  = 1; }
-        if (transitionStep === 3) { starTarget   = 0; rayTarget    = 1; skyTarget = 1; }
-      } else {                           // underwater → space
-        if (transitionStep === 1) { fishTarget   = 0; planetTarget = 1; }
-        if (transitionStep === 2) { jellyTarget  = 0; nebulaTarget = 1; }
-        if (transitionStep === 3) { rayTarget    = 0; starTarget   = 1; skyTarget = 0; }
+      const from = currentScene;
+      const to   = nextScene;
+
+      // Step 1: turn off primary space/scene A element, turn on primary scene B
+      // Step 2: swap secondary elements
+      // Step 3: swap tertiary + sky
+      if (transitionStep === 1) {
+        if (from === 0) { planetTarget = 0; }
+        if (from === 1) { fishTarget   = 0; }
+        if (from === 2) { shroomTarget = 0; }
+        if (to   === 0) { planetTarget = 1; }
+        if (to   === 1) { fishTarget   = 1; }
+        if (to   === 2) { shroomTarget = 1; }
       }
-      if (transitionStep >= 3) {
+      if (transitionStep === 2) {
+        if (from === 0) { nebulaTarget = 0; }
+        if (from === 1) { jellyTarget  = 0; }
+        if (to   === 0) { nebulaTarget = 1; }
+        if (to   === 1) { jellyTarget  = 1; }
+      }
+      if (transitionStep === 3) {
+        if (from === 0) { starTarget = 0; }
+        if (from === 1) { rayTarget  = 0; }
+        if (to   === 0) { starTarget = 1; }
+        if (to   === 1) { rayTarget  = 1; }
         transitionActive = false;
-        currentScene     = transitionDir === 1 ? 1 : 0;
+        currentScene     = nextScene;
       }
     }
   }
-  underwaterBeatPulse *= Math.pow(0.18, dt);
+  beatPulse *= Math.pow(0.18, dt);
 
-  // ── Scene switch trigger — every 4th logo flip ─────────────────────────────
+  // ── Scene switch trigger — every 4th logo flip, cycle through all 3 ────────
   if (spinCount !== lastSpinCount) {
     lastSpinCount = spinCount;
     if (spinCount % 4 === 0 && !transitionActive) {
       transitionActive = true;
-      transitionDir    = currentScene === 0 ? 1 : -1;
       transitionStep   = 0;
+      nextScene        = (currentScene + 1) % 3;
     }
   }
 
@@ -276,14 +302,16 @@ export function animate() {
   fishBlend    = lerp(fishBlend,   fishTarget,   EL);
   jellyBlend   = lerp(jellyBlend,  jellyTarget,  EL);
   rayBlend     = lerp(rayBlend,    rayTarget,    EL);
-  skyBlend     = lerp(skyBlend,    skyTarget,    dt * 0.5);
-  tiltCurrent  = lerp(tiltCurrent, skyTarget === 0 ? TILT_SPACE : TILT_WATER, dt * 0.5);
+  shroomBlend  = lerp(shroomBlend, shroomTarget, EL);
 
-  scene.background = new THREE.Color().lerpColors(SPACE_SKY, WATER_SKY, skyBlend);
+  // Sky blends toward the target scene's sky color
+  const targetSky = SCENE_SKIES[transitionActive ? nextScene : currentScene];
+  scene.background = new THREE.Color().lerpColors(scene.background, targetSky, dt * 0.5);
+  tiltCurrent      = lerp(tiltCurrent, SCENE_TILTS[transitionActive ? nextScene : currentScene], dt * 0.5);
 
   setPlanetsVisible(planetBlend > 0.01);
-  setSpinsLocked(false);  // logo flips in both scenes
-  updateLogoUpright(skyBlend);
+  setSpinsLocked(false);
+  updateLogoUpright(1 - starBlend);  // upright when stars are gone (non-space)
 
   // ── Shader mode crossfade ───────────────────────────────────────────────────
   modeFloat += (modeTarget - modeFloat) * 0.28;
@@ -394,7 +422,8 @@ export function animate() {
   updateMeteorShower(dt);
   updateStars(sHigh, starBlend);
   updateNebula(t, sBass, nebulaBlend);
-  updateUnderwaterScene(t, fishBlend, jellyBlend, rayBlend, sBass, sHigh, underwaterBeatPulse);
+  updateUnderwaterScene(t, fishBlend, jellyBlend, rayBlend, sBass, sHigh, beatPulse);
+  updateForestScene(t, shroomBlend, sBass, sMid, sHigh, beatPulse);
   updateVisualizer(freqData);
 
   // ── Fluid ──────────────────────────────────────────────────────────────────

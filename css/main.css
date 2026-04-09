@@ -92,20 +92,25 @@ body {
 
 #tagline {
   position: fixed;
-  top: 50%;
-  left: 0;
-  transform: translateY(-50%);
-  width: 100%;
-  white-space: nowrap;
-  text-align: center;
+  top: 28px;
+  left: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 10px;
+  border: 1px solid white;
   font-family: 'Orbitron', sans-serif;
   font-weight: 900;
-  letter-spacing: 0.06em;
-  color: transparent;
-  -webkit-text-stroke: 1.5px rgba(255, 255, 255, 0.88);
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  line-height: 1.05;
+  color: #ffffff;
   pointer-events: none;
   z-index: 200;
-  line-height: 1;
   opacity: 0;
   transition: opacity 1.2s ease;
+}
+
+#tagline span {
+  display: block;
 }
